@@ -22,14 +22,27 @@ import org.elasticsearch.client.RestHighLevelClient;
 import org.elasticsearch.client.indices.CreateIndexRequest;
 import org.elasticsearch.client.indices.CreateIndexResponse;
 import org.elasticsearch.client.indices.GetIndexRequest;
+import org.elasticsearch.common.geo.GeoPoint;
+import org.elasticsearch.common.text.Text;
+import org.elasticsearch.common.unit.DistanceUnit;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.index.query.MatchAllQueryBuilder;
+import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.index.query.TermQueryBuilder;
 import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.elasticsearch.search.fetch.subphase.FetchSourceContext;
+import org.elasticsearch.search.fetch.subphase.highlight.HighlightBuilder;
+import org.elasticsearch.search.fetch.subphase.highlight.HighlightField;
+import org.elasticsearch.search.sort.GeoDistanceSortBuilder;
+import org.elasticsearch.search.sort.SortBuilders;
+import org.elasticsearch.search.sort.SortOrder;
+import org.elasticsearch.search.suggest.SuggestBuilder;
+import org.elasticsearch.search.suggest.SuggestBuilders;
+import org.elasticsearch.search.suggest.completion.CompletionSuggestion;
+import org.elasticsearch.search.suggest.completion.CompletionSuggestionBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -38,6 +51,8 @@ import org.springframework.web.bind.annotation.*;
 
 import javax.naming.directory.SearchResult;
 import java.io.IOException;
+import java.net.URLDecoder;
+import java.util.ArrayList;
 import java.util.List;
 
 @RestController
@@ -102,7 +117,7 @@ public class ESController {
     @PostMapping(value = "/es/document/add/{name}")
     public String documentAdd(@PathVariable(value = "name") String name, @RequestBody User user) throws IOException {
         IndexRequest request = new IndexRequest(name);
-        request.id("1");
+//        request.id("1"); id自动生成
         request.timeout(TimeValue.timeValueSeconds(1));
         request.source(JSON.toJSONString(user), XContentType.JSON);
         IndexResponse response = highLevelClient.index(request, RequestOptions.DEFAULT);
@@ -163,7 +178,7 @@ public class ESController {
      * @return
      * @throws IOException
      */
-    @GetMapping(value = "/es/document/info/{index}/{id}")
+    @GetMapping(value = "/es/document/del/{index}/{id}")
     public String delDocument(@PathVariable(value = "index") String index, @PathVariable(value = "id") String id) throws IOException {
         DeleteRequest request = new DeleteRequest(index, id);
         request.timeout(TimeValue.timeValueMillis(1));
@@ -184,7 +199,7 @@ public class ESController {
         request.timeout(TimeValue.timeValueSeconds(1));
         for (int i = 0; i < userList.size(); i++) {
             request.add(new IndexRequest(name)
-                    .id((i + 1) + "")
+//                    .id((i + 1) + "")
                     .source(JSON.toJSONString(userList.get(i)), XContentType.JSON));
         }
         BulkResponse response =  highLevelClient.bulk(request,RequestOptions.DEFAULT);
@@ -192,7 +207,7 @@ public class ESController {
     }
 
     /**
-     * 精确查询/匹配所有查询 - 文档
+     * 精确查询/匹配所有查询 - 文档 -高亮显示
      * @param index
      * @return
      * @throws IOException
@@ -202,23 +217,212 @@ public class ESController {
         SearchRequest result  = new SearchRequest(index);
 
         SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
-        sourceBuilder.highlighter();
         sourceBuilder.timeout(TimeValue.timeValueSeconds(1));
         /**
          * 精确查询/匹配所有
          */
-        TermQueryBuilder termQueryBuilder =  QueryBuilders.termQuery("mame","just");
-//        MatchAllQueryBuilder matchAllQueryBuilder1 = QueryBuilders.matchAllQuery();
+        TermQueryBuilder termQueryBuilder =  QueryBuilders.termQuery("name","just");
+        MatchAllQueryBuilder matchAllQueryBuilder1 = QueryBuilders.matchAllQuery();
         sourceBuilder.query(termQueryBuilder);
+
+        HighlightBuilder highlightBuilder = new HighlightBuilder();
+        /**
+         * 高亮只匹配查询字段
+         */
+        highlightBuilder.field("name");
+        highlightBuilder.preTags("<b>");
+        highlightBuilder.postTags("</b>");
+        sourceBuilder.highlighter(highlightBuilder);
 
         result.source(sourceBuilder);
         SearchResponse searchResponse = highLevelClient.search(result, RequestOptions.DEFAULT);
         SearchHit[] hits = searchResponse.getHits().getHits();
         for (SearchHit hit : hits) {
+            logger.info(hit.getSourceAsString());
+            HighlightField ageField = hit.getHighlightFields().get("name");
+            for (Text fragment : ageField.getFragments()) {
+                logger.info(fragment.toString());
+            }
             logger.info(hit.getSourceAsMap().toString());
         }
         return "success";
     }
+
+
+    /**
+     * 搜索建议
+     * @param index
+     * @param suggest
+     * @return
+     * @throws IOException
+     */
+    @GetMapping(value = "/es/document/search/{index}/{suggest}")
+    public List<String> searchDocument(@PathVariable(value = "index") String index,@PathVariable(value = "suggest") String suggest) throws IOException {
+        /**
+         * 搜索建议 -- 新建索引
+         * PUT /user
+         * {
+         *     "settings":{
+         *         "analysis":{
+         *             "analyzer":{
+         *                 "default":{
+         *                     "type":"ik_max_word"
+         *                 }
+         *             }
+         *         }
+         *     },
+         *     "mappings":{
+         *         "dynamic_date_formats": [
+         *              "MM/dd/yyyy",
+         *              "yyyy/MM/dd HH:mm:ss",
+         *              "yyyy-MM-dd",
+         *              "yyyy-MM-dd HH:mm:ss"
+         *          ],
+         *         "properties":{
+         *             "suggest":{
+         *                 "type":"completion"
+         *             }
+         *         }
+         *     }
+         * }
+         *
+         *
+         * POST /user/_doc
+         * {
+         *     "name":"小王一号",
+         *     "age":"18",
+         *     "birthday":"2020-09-09",
+         *     "suggest": {
+         *        "input": "小王"
+         *     }
+         * }
+         *
+         * POST /user/_doc
+         * {
+         *     "name":"小王二号",
+         *     "age":"18",
+         *     "birthday":"2020-09-09",
+         *     "suggest": {
+         *        "input": "小王"
+         *     }
+         * }
+         *
+         * POST /user/_doc
+         * {
+         *     "name":"小周一号",
+         *     "age":"18",
+         *     "birthday":"2020-09-09",
+         *     "suggest": {
+         *        "input": "小周"
+         *     }
+         * }
+         *
+         */
+        SearchRequest searchRequest = new SearchRequest(index);
+
+        SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
+
+        CompletionSuggestionBuilder suggestionBuilder = SuggestBuilders
+                .completionSuggestion("suggest")
+                .prefix(suggest);
+
+        SuggestBuilder suggestBuilder = new SuggestBuilder();
+        //自定义搜索名
+        suggestBuilder.addSuggestion("s-test",suggestionBuilder);
+
+        sourceBuilder.suggest(suggestBuilder);
+        searchRequest.source(sourceBuilder);
+
+        SearchResponse response = highLevelClient.search(searchRequest, RequestOptions.DEFAULT);
+
+        CompletionSuggestion suggestion = response.getSuggest().getSuggestion("s-test");
+        List<String> resList = new ArrayList<>();
+        for (CompletionSuggestion.Entry.Option option : suggestion.getOptions()) {
+            logger.info(option.getText().toString());
+            resList.add(option.getHit().getSourceAsMap().get("name").toString());
+        }
+        return resList;
+    }
+
+    @GetMapping(value = "/es/document/search/geo/{index}")
+    public List<String> geoSearchDocument(@PathVariable(value = "index") String index) throws IOException {
+        /**
+         * PUT /geo/
+         * {
+         *     "settings":{
+         *         "analysis":{
+         *             "analyzer":{
+         *                 "default":{
+         *                     "type":"ik_max_word"
+         *                 }
+         *             }
+         *         }
+         *     },
+         *     "mappings":{
+         *         "dynamic_date_formats":[
+         *             "MM/dd/yyyy",
+         *             "yyyy/MM/dd HH:mm:ss",
+         *             "yyyy-MM-dd",
+         *             "yyyy-MM-dd HH:mm:ss"
+         *         ],
+         *         "properties":{
+         *             "location":{
+         *                 "type":"geo_point"
+         *             }
+         *         }
+         *     }
+         * }
+         *
+         * ---- 北京站
+         * POST /geo/_doc
+         * {
+         *     "name":"路人甲",
+         *     "location":{
+         *         "lat": 39.90279998006104,
+         *         "lon": 116.42703999493406
+         *     }
+         * }
+         * ---- 朝阳公园
+         * POST /geo/_doc
+         * {
+         *     "name":"路人乙",
+         *     "location":{
+         *         "lat": 39.93367367974064,
+         *         "lon": 116.47845257733152
+         *     }
+         * }
+         */
+
+        SearchRequest searchRequest = new SearchRequest(index);
+        SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
+
+        //工体的坐标
+        GeoPoint geoPoint = new GeoPoint(39.93367367974064d,116.47845257733152d);
+        //geo距离查询  name=geo字段
+        QueryBuilder queryBuilder = QueryBuilders.geoDistanceQuery("location")
+                //距离 3KM
+                .distance(3d, DistanceUnit.KILOMETERS)
+                //坐标工体
+                .point(geoPoint);
+
+        //把查询结果按照离“我”的距离排序
+        GeoDistanceSortBuilder sortBuilder = SortBuilders
+                .geoDistanceSort("location", geoPoint)
+                .order(SortOrder.ASC);
+
+        sourceBuilder.sort(sortBuilder);
+//        sourceBuilder.query(queryBuilder);
+        searchRequest.source(sourceBuilder);
+        SearchResponse response = highLevelClient.search(searchRequest, RequestOptions.DEFAULT);
+        List<String> resList = new ArrayList<>();
+
+        for (SearchHit hit : response.getHits().getHits()) {
+            resList.add(hit.getSourceAsMap().get("name").toString());
+        }
+        return resList;
+    }
+
+
 
 
 
