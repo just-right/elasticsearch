@@ -319,7 +319,8 @@ public class ESController {
          *
          */
         SearchRequest searchRequest = new SearchRequest(index);
-
+        suggest = URLDecoder.decode(suggest,"utf-8");
+//        suggest = "小王";
         SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
 
         CompletionSuggestionBuilder suggestionBuilder = SuggestBuilders
