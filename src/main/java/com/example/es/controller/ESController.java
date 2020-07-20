@@ -1,6 +1,8 @@
 package com.example.es.controller;
 
 import com.alibaba.fastjson.JSON;
+import com.example.es.entity.Shop;
+import com.example.es.entity.ShopSearchInfo;
 import com.example.es.entity.User;
 import lombok.val;
 import org.elasticsearch.action.admin.indices.delete.DeleteIndexRequest;
@@ -47,12 +49,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.data.elasticsearch.core.completion.Completion;
 import org.springframework.web.bind.annotation.*;
 
 import javax.naming.directory.SearchResult;
 import java.io.IOException;
 import java.net.URLDecoder;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 @RestController
@@ -63,6 +67,74 @@ public class ESController {
     @Autowired
     @Qualifier("restHighLevelClient")
     private RestHighLevelClient highLevelClient;
+
+    @PostMapping(value = "/es/document/create/shop")
+    public String createShopDocument(@RequestBody Shop shop) throws IOException {
+        IndexRequest indexRequest = new IndexRequest("shop");
+        indexRequest.timeout(TimeValue.timeValueSeconds(1));
+        shop.setSuggest(new Completion(shop.getTags()));
+        indexRequest.source(JSON.toJSONString(shop),XContentType.JSON);
+        IndexResponse indexResponse = highLevelClient.index(indexRequest, RequestOptions.DEFAULT);
+        return indexResponse.toString();
+    }
+
+
+    @PostMapping(value = "/es/document/search/shop")
+    public String shopSearch(@RequestBody ShopSearchInfo shopSearchInfo) throws IOException {
+        SearchRequest searchRequest = new SearchRequest("shop");
+        SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
+
+
+        HighlightBuilder highlightBuilder = new HighlightBuilder();
+        /**
+         * 高亮只匹配查询字段
+         */
+        highlightBuilder.field(Shop.SHOPNAME);
+        highlightBuilder.preTags("<b>");
+        highlightBuilder.postTags("</b>");
+
+        /**
+         * 搜索建议
+         */
+        CompletionSuggestionBuilder suggestionBuilder = SuggestBuilders
+                .completionSuggestion(Shop.SUGGEST)
+                .prefix(shopSearchInfo.getShopName());
+        SuggestBuilder suggestBuilder = new SuggestBuilder();
+        //自定义搜索名
+        suggestBuilder.addSuggestion("shopSearch",suggestionBuilder);
+
+        /**
+         * GEO位置搜索
+         */
+        GeoPoint geoPoint = new GeoPoint(shopSearchInfo.getLatitude(),shopSearchInfo.getLongitude());
+        //geo距离查询
+        QueryBuilder queryBuilder = QueryBuilders.geoDistanceQuery(Shop.LOCATION)
+                .distance(shopSearchInfo.getLen(), DistanceUnit.KILOMETERS)
+                .point(geoPoint);
+
+        sourceBuilder.highlighter(highlightBuilder);
+        sourceBuilder.suggest(suggestBuilder);
+        sourceBuilder.query(queryBuilder);
+
+        searchRequest.source(sourceBuilder);
+
+        SearchResponse response = highLevelClient.search(searchRequest, RequestOptions.DEFAULT);
+
+
+        List<String> geoResList = new ArrayList<>();
+        for (SearchHit hit : response.getHits().getHits()) {
+            geoResList.add(hit.getSourceAsMap().get(Shop.SHOPNAME).toString());
+        }
+
+        CompletionSuggestion suggestion = response.getSuggest().getSuggestion("shopSearch");
+        List<String> suggestResList = new ArrayList<>();
+        for (CompletionSuggestion.Entry.Option option : suggestion.getOptions()) {
+            suggestResList.add(option.getHit().getSourceAsMap().get(Shop.SHOPNAME).toString());
+        }
+        return null;
+    }
+
+
 
     /**
      * 创建索引
@@ -320,9 +392,7 @@ public class ESController {
          */
         SearchRequest searchRequest = new SearchRequest(index);
         suggest = URLDecoder.decode(suggest,"utf-8");
-//        suggest = "小王";
         SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
-
         CompletionSuggestionBuilder suggestionBuilder = SuggestBuilders
                 .completionSuggestion("suggest")
                 .prefix(suggest);
@@ -422,6 +492,7 @@ public class ESController {
         }
         return resList;
     }
+
 
 
 
