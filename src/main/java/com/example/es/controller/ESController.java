@@ -140,6 +140,9 @@ public class ESController {
          * 寻找相同元素
          */
         geoResList.retainAll(suggestResList);
+        if (geoResList == null || geoResList.size() <= 0) {
+            return "未搜索到相关信息！";
+        }
         List<SearchResultInfo> resList = new ArrayList<>();
         for (String shopID : geoResList) {
             GetRequest request = new GetRequest("shop", shopID);
