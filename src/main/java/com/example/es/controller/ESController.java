@@ -71,115 +71,115 @@ public class ESController {
     @Qualifier("restHighLevelClient")
     private RestHighLevelClient highLevelClient;
 
-    @PostMapping(value = "/es/document/create/shop")
-    public String createShopDocument(@RequestBody Shop shop) throws IOException {
-        IndexRequest indexRequest = new IndexRequest("shop");
-        indexRequest.timeout(TimeValue.timeValueSeconds(1));
-        shop.setSuggest(new Completion(shop.getTags()));
-        /**
-         * 使用Gson --
-         * GeoPoint传入时传经纬度 --- 使用fastjson会解析错误
-         * by https://agentd.cn/archives/es-geopoint
-         */
-        indexRequest.source(new Gson().toJson(shop), XContentType.JSON);
-        IndexResponse indexResponse = highLevelClient.index(indexRequest, RequestOptions.DEFAULT);
-        return indexResponse.toString();
+@PostMapping(value = "/es/document/create/shop")
+public String createShopDocument(@RequestBody Shop shop) throws IOException {
+    IndexRequest indexRequest = new IndexRequest("shop");
+    indexRequest.timeout(TimeValue.timeValueSeconds(1));
+    shop.setSuggest(new Completion(shop.getTags()));
+    /**
+     * 使用Gson --
+     * GeoPoint传入时传经纬度 --- 使用fastjson会解析错误
+     * by https://agentd.cn/archives/es-geopoint
+     */
+    indexRequest.source(new Gson().toJson(shop), XContentType.JSON);
+    IndexResponse indexResponse = highLevelClient.index(indexRequest, RequestOptions.DEFAULT);
+    return indexResponse.toString();
+}
+
+
+@PostMapping(value = "/es/document/search/shop")
+public String shopSearch(@RequestBody ShopSearchInfo shopSearchInfo) throws IOException {
+    SearchRequest searchRequest = new SearchRequest("shop");
+    SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
+
+    /**
+     * 搜索建议
+     */
+    CompletionSuggestionBuilder suggestionBuilder = SuggestBuilders
+            .completionSuggestion(Shop.SUGGEST)
+            .prefix(shopSearchInfo.getShopName());
+    SuggestBuilder suggestBuilder = new SuggestBuilder();
+    //自定义搜索名
+    suggestBuilder.addSuggestion("shopSearch", suggestionBuilder);
+
+    /**
+     * GEO位置搜索
+     */
+    GeoPoint geoPoint = new GeoPoint(shopSearchInfo.getLatitude(), shopSearchInfo.getLongitude());
+    //geo距离查询
+    QueryBuilder queryBuilder = QueryBuilders.geoDistanceQuery(Shop.LOCATION)
+            .distance(shopSearchInfo.getLen(), DistanceUnit.KILOMETERS)
+            .point(geoPoint);
+
+    sourceBuilder.suggest(suggestBuilder);
+    sourceBuilder.query(queryBuilder);
+
+    searchRequest.source(sourceBuilder);
+
+    SearchResponse response = highLevelClient.search(searchRequest, RequestOptions.DEFAULT);
+
+
+    List<String> geoResList = new ArrayList<>();
+    SearchHit[] searchHits = response.getHits().getHits();
+    if (searchHits == null || searchHits.length <= 0) {
+        return "未搜索到相关信息！";
     }
-
-
-    @PostMapping(value = "/es/document/search/shop")
-    public String shopSearch(@RequestBody ShopSearchInfo shopSearchInfo) throws IOException {
-        SearchRequest searchRequest = new SearchRequest("shop");
-        SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
-
-        /**
-         * 搜索建议
-         */
-        CompletionSuggestionBuilder suggestionBuilder = SuggestBuilders
-                .completionSuggestion(Shop.SUGGEST)
-                .prefix(shopSearchInfo.getShopName());
-        SuggestBuilder suggestBuilder = new SuggestBuilder();
-        //自定义搜索名
-        suggestBuilder.addSuggestion("shopSearch", suggestionBuilder);
-
-        /**
-         * GEO位置搜索
-         */
-        GeoPoint geoPoint = new GeoPoint(shopSearchInfo.getLatitude(), shopSearchInfo.getLongitude());
-        //geo距离查询
-        QueryBuilder queryBuilder = QueryBuilders.geoDistanceQuery(Shop.LOCATION)
-                .distance(shopSearchInfo.getLen(), DistanceUnit.KILOMETERS)
-                .point(geoPoint);
-
-        sourceBuilder.suggest(suggestBuilder);
-        sourceBuilder.query(queryBuilder);
-
-        searchRequest.source(sourceBuilder);
-
-        SearchResponse response = highLevelClient.search(searchRequest, RequestOptions.DEFAULT);
-
-
-        List<String> geoResList = new ArrayList<>();
-        SearchHit[] searchHits = response.getHits().getHits();
-        if (searchHits == null || searchHits.length <= 0) {
-            return "未搜索到相关信息！";
-        }
-        for (SearchHit hit : searchHits) {
-            geoResList.add(hit.getId());
-        }
-        CompletionSuggestion suggestion = response.getSuggest().getSuggestion("shopSearch");
-        List<CompletionSuggestion.Entry.Option> optionList = suggestion.getOptions();
-        if (optionList == null || optionList.size() <= 0) {
-            return "未搜索到相关信息！";
-        }
-        List<String> suggestResList = new ArrayList<>();
-        for (CompletionSuggestion.Entry.Option option : optionList) {
-            suggestResList.add(option.getHit().getId());
-        }
-        /**
-         * 寻找相同元素
-         */
-        geoResList.retainAll(suggestResList);
-        if (geoResList == null || geoResList.size() <= 0) {
-            return "未搜索到相关信息！";
-        }
-        List<SearchResultInfo> resList = new ArrayList<>();
-        for (String shopID : geoResList) {
-            GetRequest request = new GetRequest("shop", shopID);
-            GetResponse searchResponse = highLevelClient.get(request, RequestOptions.DEFAULT);
-            Map<String, Object> resultMap = searchResponse.getSourceAsMap();
-            if (resultMap == null || resultMap.size() <= 0) {
-                continue;
-            }
-            String shopName = (String) resultMap.get(Shop.SHOPNAME);
-            Map<String, Double> geoInfo = (Map<String, Double>) resultMap.get(Shop.LOCATION);
-            double _lon1 = geoInfo.get("lon");
-            double _lat1 = geoInfo.get("lat");
-            double _lon2 = shopSearchInfo.getLongitude();
-            double _lat2 = shopSearchInfo.getLatitude();
-            double len = this.getDistance(_lat1, _lon1, _lat2, _lon2);
-            SearchResultInfo resultInfo = new SearchResultInfo();
-            resultInfo.setShopID(shopID).setShopName(shopName).setLen(len);
-            resList.add(resultInfo);
-        }
-        /**
-         * 按照距离排序 - 倒序
-         */
-        resList = resList.stream().distinct().sorted(Comparator
-                .comparing(SearchResultInfo::getLen)).collect(Collectors.toList());
-        return JSONObject.toJSONString(resList);
+    for (SearchHit hit : searchHits) {
+        geoResList.add(hit.getId());
     }
-
-    public double getDistance(double _lat1, double _lon1, double _lat2, double _lon2) {
-        double lat1 = (Math.PI / 180) * _lat1;
-        double lat2 = (Math.PI / 180) * _lat2;
-        double lon1 = (Math.PI / 180) * _lon1;
-        double lon2 = (Math.PI / 180) * _lon2;
-        //地球半径
-        double R = 6378.1;
-        double d = Math.acos(Math.sin(lat1) * Math.sin(lat2) + Math.cos(lat1) * Math.cos(lat2) * Math.cos(lon2 - lon1)) * R;
-        return new BigDecimal(d).setScale(4, BigDecimal.ROUND_HALF_UP).doubleValue();
+    CompletionSuggestion suggestion = response.getSuggest().getSuggestion("shopSearch");
+    List<CompletionSuggestion.Entry.Option> optionList = suggestion.getOptions();
+    if (optionList == null || optionList.size() <= 0) {
+        return "未搜索到相关信息！";
     }
+    List<String> suggestResList = new ArrayList<>();
+    for (CompletionSuggestion.Entry.Option option : optionList) {
+        suggestResList.add(option.getHit().getId());
+    }
+    /**
+     * 寻找相同元素
+     */
+    geoResList.retainAll(suggestResList);
+    if (geoResList == null || geoResList.size() <= 0) {
+        return "未搜索到相关信息！";
+    }
+    List<SearchResultInfo> resList = new ArrayList<>();
+    for (String shopID : geoResList) {
+        GetRequest request = new GetRequest("shop", shopID);
+        GetResponse searchResponse = highLevelClient.get(request, RequestOptions.DEFAULT);
+        Map<String, Object> resultMap = searchResponse.getSourceAsMap();
+        if (resultMap == null || resultMap.size() <= 0) {
+            continue;
+        }
+        String shopName = (String) resultMap.get(Shop.SHOPNAME);
+        Map<String, Double> geoInfo = (Map<String, Double>) resultMap.get(Shop.LOCATION);
+        double _lon1 = geoInfo.get("lon");
+        double _lat1 = geoInfo.get("lat");
+        double _lon2 = shopSearchInfo.getLongitude();
+        double _lat2 = shopSearchInfo.getLatitude();
+        double len = this.getDistance(_lat1, _lon1, _lat2, _lon2);
+        SearchResultInfo resultInfo = new SearchResultInfo();
+        resultInfo.setShopID(shopID).setShopName(shopName).setLen(len);
+        resList.add(resultInfo);
+    }
+    /**
+     * 按照距离排序 - 倒序
+     */
+    resList = resList.stream().distinct().sorted(Comparator
+            .comparing(SearchResultInfo::getLen)).collect(Collectors.toList());
+    return JSONObject.toJSONString(resList);
+}
+
+public double getDistance(double _lat1, double _lon1, double _lat2, double _lon2) {
+    double lat1 = (Math.PI / 180) * _lat1;
+    double lat2 = (Math.PI / 180) * _lat2;
+    double lon1 = (Math.PI / 180) * _lon1;
+    double lon2 = (Math.PI / 180) * _lon2;
+    //地球半径
+    double R = 6378.1;
+    double d = Math.acos(Math.sin(lat1) * Math.sin(lat2) + Math.cos(lat1) * Math.cos(lat2) * Math.cos(lon2 - lon1)) * R;
+    return new BigDecimal(d).setScale(4, BigDecimal.ROUND_HALF_UP).doubleValue();
+}
 
     /**
      * 获取文档信息
