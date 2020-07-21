@@ -18,7 +18,7 @@ public class Shop {
     @CompletionField
     private Completion suggest;
     @GeoPointField
-    private String location;
+    private GeoPoint location;
     public static final String SHOPNAME = "shopName";
     public static final String SUGGEST = "suggest";
     public static final String LOCATION = "location";
