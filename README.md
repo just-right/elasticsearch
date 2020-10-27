@@ -5,14 +5,14 @@
 > [Spring Boot整合Elasticsearch](https://www.jianshu.com/p/3582675704e1)
 
 - Elasticsearch基本介绍
-- Elasticsearch、Elasticsearch、Ik、Kibana环境搭建
+- Elasticsearch、Elasticsearch Head、Ik、Kibana环境搭建
 - 实现商铺基于搜索建议、GEO位置搜索  
 
 # 二、前期准备
 
 ## 2.1 环境搭建:
 
-&emsp;&emsp;Elasticsearch、Elasticsearch、Ik、Kibana环境搭建参考：
+&emsp;&emsp;Elasticsearch、Elasticsearch Head、Ik、Kibana环境搭建参考：
 
 > [Spring Boot整合Elasticsearch](https://www.jianshu.com/p/3582675704e1)
 
